@@ -10,12 +10,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertCircle, Calendar, CheckCircle, XCircle } from "lucide-react"
+import { AlertCircle, Calendar, CheckCircle, XCircle, Loader2 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import toast from "react-hot-toast"
 import type { AttendanceRecord, PaymentStatus } from "@/types/attendance"
 import { AttendancePieChart } from "@/components/attendance-pie-chart"
 import { DashboardHeader } from "@/components/dashboard-header"
+import { getCookie } from "@/lib/cookies"
 
 export default function DashboardPage() {
   const { user, logout } = useAuth()
@@ -24,54 +25,98 @@ export default function DashboardPage() {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isPaymentLoading, setIsPaymentLoading] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
 
+  // Check authentication directly from cookies as a backup
   useEffect(() => {
-    if (!user) {
-      router.push("/login")
+    // Check if we have a user in context
+    console.log("Dashboard: Checking authentication, user from context =", user)
+
+    // Also check cookies directly
+    const cookieUser = getCookie("user")
+    console.log("Dashboard: User from cookie =", cookieUser)
+
+    // If we have a user either in context or cookie, proceed
+    const effectiveUser = user || cookieUser
+
+    if (!effectiveUser) {
+      console.log("Dashboard: No user found in context or cookies, redirecting to login")
+      window.location.href = "/login"
       return
     }
 
+    console.log("Dashboard: User authenticated:", effectiveUser)
+    setAuthChecked(true)
+  }, [user, router])
+
+  // Fetch data only after authentication is confirmed
+  useEffect(() => {
+    if (!authChecked) return
+
+    // Get the effective user (from context or cookie)
+    const effectiveUser = user || getCookie("user")
+    if (!effectiveUser) return
+
+    console.log("Dashboard: Authentication confirmed, fetching data for user:", effectiveUser)
+
     const fetchAttendance = async () => {
       try {
-        const response = await fetch(`http://127.0.0.1:5000/api/student/attendance?email=${encodeURIComponent(user)}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        console.log(`Dashboard: Fetching attendance for ${effectiveUser}`)
+        const response = await fetch(
+          `http://127.0.0.1:5000/api/student/attendance?email=${encodeURIComponent(effectiveUser)}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
           },
-        })
+        )
 
         if (response.ok) {
           const data = await response.json()
+          console.log("Dashboard: Attendance data received:", data)
           setAttendanceData(data.attendance || [])
         } else {
+          const errorText = await response.text()
+          console.error("Dashboard: Failed to fetch attendance data:", errorText)
           toast.error("Failed to fetch attendance data")
         }
       } catch (error) {
-        console.error("Error fetching attendance:", error)
+        console.error("Dashboard: Error fetching attendance:", error)
         toast.error("Server error. Please try again later.")
       }
     }
 
     const checkPaymentStatus = async () => {
       try {
-        const response = await fetch(`http://127.0.0.1:5000/api/payment_check/${user}`)
+        console.log(`Dashboard: Checking payment status for ${effectiveUser}`)
+        const response = await fetch(
+          `http://127.0.0.1:5000/api/student/payment_check?email=${encodeURIComponent(effectiveUser)}`,
+        )
         if (response.ok) {
           const data = await response.json()
+          console.log("Dashboard: Payment status received:", data)
           setPaymentStatus(data)
         } else {
+          const errorText = await response.text()
+          console.error("Dashboard: Failed to check payment status:", errorText)
           toast.error("Failed to check payment status")
         }
       } catch (error) {
-        console.error("Error checking payment status:", error)
+        console.error("Dashboard: Error checking payment status:", error)
         toast.error("Server error. Please try again later.")
       }
     }
 
-    Promise.all([fetchAttendance(), checkPaymentStatus()]).finally(() => setIsLoading(false))
-  }, [user, router])
+    Promise.all([fetchAttendance(), checkPaymentStatus()]).finally(() => {
+      console.log("Dashboard: Data fetching complete")
+      setIsLoading(false)
+    })
+  }, [authChecked, user])
 
   const handlePayFine = async () => {
-    if (!user) return
+    const effectiveUser = user || getCookie("user")
+    if (!effectiveUser) return
 
     setIsPaymentLoading(true)
     try {
@@ -80,7 +125,7 @@ export default function DashboardPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email: user }),
+        body: JSON.stringify({ email: effectiveUser }),
       })
 
       const data = await response.json()
@@ -108,6 +153,19 @@ export default function DashboardPage() {
   const attendancePercentage = calculateAttendancePercentage()
   const needsToPayFine = paymentStatus?.needs_to_pay_fine || false
 
+  // Get the effective user for display
+  const effectiveUser = user || getCookie("user") || ""
+
+  // If not authenticated, don't render anything (redirect will happen)
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span className="ml-2">Checking authentication...</span>
+      </div>
+    )
+  }
+
   if (isLoading) {
     return (
       <div className="container mx-auto p-4 md:p-8">
@@ -128,7 +186,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
-      <DashboardHeader title="Student Dashboard" email={user || ""} onLogout={logout} />
+      <DashboardHeader title="Student Dashboard" email={effectiveUser} onLogout={logout} />
 
       <main className="container mx-auto p-4 md:p-8">
         <motion.div

@@ -14,6 +14,8 @@ import Link from "next/link"
 import toast from "react-hot-toast"
 import { z } from "zod"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { setCookie } from "@/lib/cookies"
+import { DebugInfo } from "@/components/debug-info"
 
 const emailSchema = z.string().email("Please enter a valid email address")
 const otpSchema = z.string().length(6, "OTP must be 6 digits").regex(/^\d+$/, "OTP must contain only numbers")
@@ -23,15 +25,29 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("")
   const [otpSent, setOtpSent] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [debugState, setDebugState] = useState<any>({})
+  const [redirectAttempted, setRedirectAttempted] = useState(false)
   const router = useRouter()
-  const { login, isAuthenticated } = useAuth()
+  const { login, isAuthenticated, logout } = useAuth()
 
-  // Redirect to dashboard if already authenticated
+  // Clear any existing authentication on login page load
   useEffect(() => {
-    if (isAuthenticated) {
-      router.replace("/dashboard")
+    // Force logout when the login page loads
+    logout()
+  }, [logout])
+
+  // Force redirect if verification was successful but redirect didn't happen
+  useEffect(() => {
+    if (redirectAttempted && email) {
+      console.log("Forcing redirect to studentdashboard with email parameter after 2 seconds...")
+      const timer = setTimeout(() => {
+        const redirectUrl = `/studentdashboard?email=${encodeURIComponent(email)}`
+        window.location.href = redirectUrl
+      }, 2000)
+
+      return () => clearTimeout(timer)
     }
-  }, [isAuthenticated, router])
+  }, [redirectAttempted, email])
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,6 +94,7 @@ export default function LoginPage() {
       setIsLoading(true)
 
       try {
+        // Step 1: Verify OTP with the server
         const response = await fetch("http://127.0.0.1:5000/api/verify-otp", {
           method: "POST",
           headers: {
@@ -89,15 +106,67 @@ export default function LoginPage() {
         const data = await response.json()
 
         if (response.ok) {
-          toast.success("Login successful")
+          console.log("OTP verification successful, setting up authentication...")
+
+          // Try multiple cookie setting approaches
+          try {
+            // Approach 1: Direct document.cookie
+            document.cookie = `user=${encodeURIComponent(email)}; path=/; max-age=${60 * 60 * 24 * 7}`
+            console.log("Cookie set via document.cookie:", document.cookie)
+
+            // Approach 2: Using helper function
+            setCookie("user", email, 7)
+            console.log("Cookie set via setCookie function:", document.cookie)
+
+            // Approach 3: Using localStorage as backup
+            localStorage.setItem("user_backup", email)
+            console.log("User backup set in localStorage")
+          } catch (cookieError) {
+            console.error("Error setting cookies:", cookieError)
+          }
+
+          // Call login function from context
           login(email)
-          router.push("/dashboard")
+
+          // Show success message
+          toast.success("Login successful! Redirecting...")
+
+          // Set redirect attempted flag
+          setRedirectAttempted(true)
+
+          // Update debug state
+          setDebugState({
+            email,
+            cookiesAfterSet: document.cookie,
+            verificationResponse: data,
+            redirectAttempted: true,
+          })
+
+          // Create the redirect URL with email parameter
+          const redirectUrl = `/studentdashboard?email=${encodeURIComponent(email)}`
+
+          // Immediate redirect attempt
+          console.log(`Attempting immediate redirect to: ${redirectUrl}`)
+          window.location.href = redirectUrl
+
+          // Fallback redirect with router
+          setTimeout(() => {
+            console.log(`Attempting fallback redirect with router to: ${redirectUrl}`)
+            router.push(redirectUrl)
+          }, 1000)
         } else {
           toast.error(data.message || "Invalid OTP")
+          setDebugState({
+            error: "OTP verification failed",
+            response: data,
+          })
         }
       } catch (error) {
         toast.error("Server error. Please try again later.")
         console.error("Error verifying OTP:", error)
+        setDebugState({
+          error: String(error),
+        })
       }
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -214,10 +283,38 @@ export default function LoginPage() {
               )}
             </AnimatePresence>
           </CardContent>
-          <CardFooter className="flex justify-center">
+          <CardFooter className="flex justify-center flex-col">
             <p className="text-sm text-muted-foreground">
               {otpSent ? "Please check your email for the OTP" : "We'll send a one-time password to your email"}
             </p>
+
+            {redirectAttempted && (
+              <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-md text-sm">
+                <p className="font-medium">Redirect in progress...</p>
+                <p className="text-muted-foreground">
+                  If you are not redirected automatically,
+                  <Button
+                    variant="link"
+                    className="p-0 h-auto font-normal"
+                    onClick={() => (window.location.href = `/studentdashboard?email=${encodeURIComponent(email)}`)}
+                  >
+                    click here
+                  </Button>
+                </p>
+              </div>
+            )}
+
+            {/* Debug information */}
+            <DebugInfo
+              data={{
+                currentCookies: document.cookie,
+                email,
+                otpSent,
+                redirectAttempted,
+                redirectUrl: `/studentdashboard?email=${encodeURIComponent(email)}`,
+                ...debugState,
+              }}
+            />
           </CardFooter>
         </Card>
       </motion.div>

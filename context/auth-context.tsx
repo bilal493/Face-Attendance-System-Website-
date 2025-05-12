@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { getCookie, setCookie, removeCookie } from "@/lib/cookies"
 
 interface AuthContextType {
   user: string | null
@@ -16,22 +17,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Check if user is stored in localStorage
-    const storedUser = localStorage.getItem("user")
+    // Check if user is stored in cookies
+    const storedUser = getCookie("user")
+    console.log("AuthContext: Initial check for stored user:", storedUser)
+
     if (storedUser) {
       setUser(storedUser)
     }
+
+    // Also check localStorage for legacy support and clean it up
+    if (typeof window !== "undefined" && window.localStorage.getItem("user")) {
+      console.log("AuthContext: Found legacy localStorage user, cleaning up")
+      window.localStorage.removeItem("user")
+    }
+
     setIsLoading(false)
   }, [])
 
   const login = (email: string) => {
+    console.log("AuthContext: Setting user:", email)
+
+    // Set in state
     setUser(email)
-    localStorage.setItem("user", email)
+
+    // Set in cookies with 1-day expiration
+    setCookie("user", email, 1)
+
+    console.log("AuthContext: User set in state and cookies")
   }
 
   const logout = () => {
+    console.log("AuthContext: Logging out user")
+
+    // Clear from state
     setUser(null)
-    localStorage.removeItem("user")
+
+    // Clear from cookies
+    removeCookie("user")
+
+    // Also clear from localStorage for complete cleanup
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("user")
+    }
+
+    console.log("AuthContext: User cleared from state and storage")
   }
 
   return (
